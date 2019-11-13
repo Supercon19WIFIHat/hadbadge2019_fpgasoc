@@ -432,10 +432,10 @@ module soc(
 		bus_error = 0;
 		mem_rdata = 'hx;
 		if (mem_addr[31:28]=='h1) begin
-			if (mem_addr[4] == 1'b0) begin
+			if (mem_addr[5:4] == 2'b00) begin
 				uart_select = mem_valid;
 				mem_rdata = uart_rdata;
-			end else if (mem_addr[4] == 1'b1) begin
+			end else if (mem_addr[5:4] == 2'b01) begin
 				irda_select = mem_valid;
 				mem_rdata = irda_rdata;				
 			end else begin

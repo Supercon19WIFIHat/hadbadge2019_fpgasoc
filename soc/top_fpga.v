@@ -50,6 +50,8 @@ module top_fpga(
 		input irda_rx,
 		output irda_sd,
 `endif
+		output wifi_tx,
+		input wifi_rx,
 		output pwmout,
 		output [17:0] lcd_db,
 		output lcd_rd,
@@ -168,7 +170,8 @@ module top_fpga(
 		.irda_rx(irda_rx),
 		.irda_sd(irda_sd),
 `endif
-
+		.wifi_tx(wifi_tx),
+		.wifi_rx(wifi_rx),
 		.pwmout(pwmout),
 		.lcd_db(lcd_db),
 		.lcd_rd(lcd_rd),

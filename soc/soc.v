@@ -42,6 +42,8 @@ module soc(
 		input uart_rx,
 		output irda_tx,
 		input irda_rx,
+		output wifi_tx,
+		input wifi_rx,
 		output reg irda_sd,
 		output pwmout,
 		output [17:0] lcd_db,
@@ -339,6 +341,11 @@ module soc(
 	reg  irda_select;
 	wire irda_ready;
 
+	// Wifi UART
+	wire [31:0] wifi_rdata;
+	reg  wifi_select;
+        wire wifi_ready;
+
 	reg misc_select;
 	wire[31:0] ram_rdata;
 	reg ram_ready;
@@ -414,6 +421,7 @@ module soc(
 		mem_select = 0;
 		uart_select = 0;
 		irda_select = 0;
+		wifi_select = 0;
 		misc_select = 0;
 		lcd_select = 0;
 		usb_select = 0;
@@ -427,9 +435,13 @@ module soc(
 			if (mem_addr[4] == 1'b0) begin
 				uart_select = mem_valid;
 				mem_rdata = uart_rdata;
-			end else begin
+			end else if (mem_addr[4] == 1'b1) begin
 				irda_select = mem_valid;
-				mem_rdata = irda_rdata;
+				mem_rdata = irda_rdata;				
+			end else begin
+				wifi_select = mem_valid;
+				mem_rdata = wifi_rdata;
+
 			end
 		end else if (mem_addr[31:28]=='h2) begin
 			misc_select = mem_valid;
@@ -511,8 +523,7 @@ module soc(
 	end
 `endif
 
-	assign mem_ready = ram_ready || uart_ready || irda_ready || misc_select ||
-			lcd_ready || linerenderer_ready || usb_ready || pic_ready || audio_ready || psram_ready ||| bus_error;
+	assign mem_ready = ram_ready || uart_ready || irda_ready || misc_select || lcd_ready || linerenderer_ready || usb_ready || pic_ready || audio_ready || psram_ready ||| bus_error;
 
 	dsadc dsadc (
 		.clk(clk48m),
@@ -627,6 +638,24 @@ module soc(
 		.bus_rdata(uart_rdata),
 		.bus_cyc(uart_select),
 		.bus_ack(uart_ready),
+		.bus_we(mem_wstrb != 0),
+		.clk(clk48m),
+		.rst(rst)
+	);
+
+	uart_wb #(
+		.FIFO_DEPTH(16),
+		.DIV_WIDTH(16),
+		.DW(32),
+		.IRDA(0)
+	) wifi_I (
+		.uart_tx(wifi_tx),
+		.uart_rx(wifi_rx),
+		.bus_addr(mem_addr[3:2]),
+		.bus_wdata(mem_wdata),
+		.bus_rdata(wifi_rdata),
+		.bus_cyc(wifi_select),
+		.bus_ack(wifi_ready),
 		.bus_we(mem_wstrb != 0),
 		.clk(clk48m),
 		.rst(rst)

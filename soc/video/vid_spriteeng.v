@@ -302,7 +302,8 @@ assign lb_xpos = dspr_xpos + dspr_xoff - offx;
 
 parameter DSPR_STATE_IDLE = 0;
 parameter DSPR_STATE_PREP1 = 1;
-parameter DSPR_STATE_DRAW = 2;
+parameter DSPR_STATE_PREP2 = 2;
+parameter DSPR_STATE_DRAW = 3;
 
 assign spritedrawer_busy = (dspr_state != DSPR_STATE_IDLE);
 
@@ -336,6 +337,7 @@ assign tilemem_x = tile_xpos;
 assign tilemem_y = dspr_tile_ypos;
 assign tilemem_no = dspr_tile;
 reg tilemem_has_data; //goes high 1 cycle after tilemem_ack
+reg drawing_tile;
 
 always @(posedge clk) begin
 	if (reset) begin
@@ -366,13 +368,17 @@ always @(posedge clk) begin
 				dspr_tile_ypos <= tile_ypos_reg;
 			end
 		end else if (dspr_state==DSPR_STATE_PREP1) begin
-			//LUT should have data now, will spit out correct dx next clock cycle.
-				dspr_state <= DSPR_STATE_DRAW;
-		end else if (dspr_state==DSPR_STATE_DRAW) begin
+			//Reciprocal LUT ROM should have data now, will spit out correct dx next clock cycle.
+			dspr_state <= DSPR_STATE_PREP2;
+			tilemem_has_data <= 0; //any data we do have is invalid
+		end else if (dspr_state==DSPR_STATE_PREP2) begin
 			//LUT has a result, feed into the multiplier.
 			//Note that for the first cycle, the output of the multiplier is always 0, which is correct,
 			//even if it doesn't have the correct value from reciproc_x yet.
 			reciproc_x_out_reg <= reciproc_x_out;
+			dspr_state <= DSPR_STATE_DRAW;
+			tilemem_has_data <= 0; //any data we do have is invalid
+		end else if (dspr_state==DSPR_STATE_DRAW) begin
 			//See if we're done.
 			if (tile_xpos_ovf) begin
 				dspr_state <= DSPR_STATE_IDLE;

@@ -56,6 +56,14 @@ extern uint32_t GFXCOPPEROPS[];
 extern volatile uint32_t SYNTH[];
 #define SYNTHREG(i) SYNTH[i/4]
 
+// When USE_8_BIT_TRIG is defined, IPL will calculate position of main menu's
+// animated letters using the less accurate but fast 8-bit sin/cos functions
+// copied from the FastLED library: https://github.com/FastLED/FastLED
+// The reduced accuracy is not critical for animation purposes but the speed
+// increase allows us to spend more time on USB tasks. This allows the USB mass
+// storage device to mount faster, copy ELF faster, etc.
+#define USE_8_BIT_TRIG
+
 uint8_t *lcdfb;
 
 
@@ -82,11 +90,13 @@ int booted_from_cartridge() {
 void cdc_task();
 
 
-void boot_cart_fpga_bitstream() {
-	MISC_REG(MISC_FLASH_SEL_REG)=MISC_FLASH_SEL_CARTFLASH;
+void boot_fpga_bitstream(int from_cart) {
+	int src=0;
+	if (from_cart) src=MISC_FLASH_SEL_CARTFLASH;
+	MISC_REG(MISC_FLASH_SEL_REG)=src;
 	volatile int w;
 	for (w=0; w<16; w++) ;
-	MISC_REG(MISC_FLASH_SEL_REG)=MISC_FLASH_SEL_CARTFLASH|MISC_FLASH_SEL_FPGARELOAD_MAGIC;
+	MISC_REG(MISC_FLASH_SEL_REG)=src|MISC_FLASH_SEL_FPGARELOAD_MAGIC;
 }
 
 extern char _binary_bgnd_tga_start;
@@ -117,6 +127,44 @@ void gfx_set_xlate_val(int layer, int xcenter, int ycenter, float scale, float r
 	GFX_REG(GFX_TILEA_INC_ROW)=(i_dy_y<<16)+(i_dy_x&0xffff);
 }
 
+#ifdef USE_8_BIT_TRIG
+// sin8_c and cos8_C are 8-bit low-precision approximation of trig functions
+// from the FastLED library: https://github.com/FastLED/FastLED
+const uint8_t b_m16_interleave[] = { 0, 49, 49, 41, 90, 27, 117, 10 };
+uint8_t sin8_C( uint8_t theta)
+{
+    uint8_t offset = theta;
+    if( theta & 0x40 ) {
+        offset = (uint8_t)255 - offset;
+    }
+    offset &= 0x3F; // 0..63
+
+    uint8_t secoffset  = offset & 0x0F; // 0..15
+    if( theta & 0x40) secoffset++;
+
+    uint8_t section = offset >> 4; // 0..3
+    uint8_t s2 = section * 2;
+    const uint8_t* p = b_m16_interleave;
+    p += s2;
+    uint8_t b   =  *p;
+    p++;
+    uint8_t m16 =  *p;
+
+    uint8_t mx = (m16 * secoffset) >> 4;
+
+    int8_t y = mx + b;
+    if( theta & 0x80 ) y = -y;
+
+    y += 128;
+
+    return y;
+}
+uint8_t cos8_C( uint8_t theta)
+{
+    return sin8_C( theta + 64);
+}
+#endif // USE_8_BIT_TRIG
+
 void set_sprite(int no, int x, int y, int sx, int sy, int tileno, int palstart) {
 	x+=64;
 	y+=64;
@@ -143,11 +191,11 @@ void menu_add_apps(menu_data_t *s, char *path, int flag) {
 	struct dirent *ed;
 	int found=0;
 	while (ed=readdir(d)) {
-//		if (strlen(ed->d_name)>4 && strcasecmp(&ed->d_name[strlen(ed->d_name)-4], ".elf")==0) {
+		if (strcmp(ed->d_name, "autoexec.elf")!=0 && strlen(ed->d_name)>4 && strcasecmp(&ed->d_name[strlen(ed->d_name)-4], ".elf")==0) {
 			s->item[s->no_items]=strdup(ed->d_name);
 			s->flag[s->no_items++]=flag;
 			found=1;
-//		}
+		}
 	}
 	if (!found) {
 		s->item[s->no_items]=strdup("*NO FILES*");
@@ -175,6 +223,8 @@ int cart_tjftl_creatable() {
 	return 1;
 }
 
+extern uint32_t rom_cart_boot_flag;
+
 void read_menu_items(menu_data_t *s) {
 	//First, clean struct
 	for (int i=0; i<s->no_items; i++) free(s->item[i]);
@@ -184,21 +234,25 @@ void read_menu_items(menu_data_t *s) {
 	if (has_cart) {
 		s->flag[s->no_items]=0;
 		s->item[s->no_items++]=strdup("- CARTRIDGE -");
-		if (cart_has_fpga_image()) {
+		if (!booted_from_cartridge() &&  cart_has_fpga_image()) {
 			s->flag[s->no_items]=ITEM_FLAG_SELECTABLE|ITEM_FLAG_ON_CART|ITEM_FLAG_BITSTREAM;
 			s->item[s->no_items++]=strdup("Boot FPGA bitstream");
 		}
 		if (fs_cart_ftl_active()) {
 			//Add cart items
-			menu_add_apps(s, "cart:", ITEM_FLAG_SELECTABLE|ITEM_FLAG_ON_CART);
+			menu_add_apps(s, "/cart/", ITEM_FLAG_SELECTABLE|ITEM_FLAG_ON_CART);
 		} else if (cart_tjftl_creatable()) {
 			s->flag[s->no_items]=ITEM_FLAG_SELECTABLE|ITEM_FLAG_ON_CART|ITEM_FLAG_FORMAT;
 			s->item[s->no_items++]=strdup("Format filesystem");
 		}
 		s->flag[s->no_items]=0;
 		s->item[s->no_items++]=strdup("- INTERNAL -");
+		if (booted_from_cartridge()) {
+			s->flag[s->no_items]=ITEM_FLAG_SELECTABLE|ITEM_FLAG_BITSTREAM;
+			s->item[s->no_items++]=strdup("Boot FPGA bitstream");
+		}
 	}
-	menu_add_apps(s, "int:", ITEM_FLAG_SELECTABLE);
+	menu_add_apps(s, "/int/", ITEM_FLAG_SELECTABLE);
 }
 
 void load_tiles() {
@@ -220,6 +274,7 @@ int show_main_menu(char *app_name, int *ret_flags) {
 	//Allocate fb memory
 	lcdfb=malloc(320*512/2);
 
+
 	//Set up the framebuffer address.
 	GFX_REG(GFX_FBADDR_REG)=((uint32_t)lcdfb)&0xFFFFFF;
 	//We're going to use a pitch of 512 pixels, and the fb palette will start at 256.
@@ -236,6 +291,11 @@ int show_main_menu(char *app_name, int *ret_flags) {
 	if (console==NULL) {
 		printf("Error opening console!\n");
 	}
+	fprintf(console, "\0331M\033C\0330A"); //Set map to tilemap B, clear tilemap, set attr to 0
+
+	//Erase tilemaps
+	for (int x=0; x<64*64; x++) GFXTILEMAPA[x]=0x20;
+	for (int x=0; x<64*64; x++) GFXTILEMAPB[x]=0x20;
 
 	printf("GFX inited. Yay!!\n");
 
@@ -251,8 +311,8 @@ int show_main_menu(char *app_name, int *ret_flags) {
 
 	//Enable layers needed
 	GFX_REG(GFX_LAYEREN_REG)=GFX_LAYEREN_FB|GFX_LAYEREN_TILEB|GFX_LAYEREN_TILEA|GFX_LAYEREN_SPR;
-	GFXPAL[FB_PAL_OFFSET+0x100]=0x00ff00ff; //Note: For some reason, the sprites use this as default bgnd. ToDo: fix this...
-	GFXPAL[FB_PAL_OFFSET+0x1ff]=0x40ff00ff; //so it becomes this instead.
+	GFXPAL[FB_PAL_OFFSET+0x100]=0x00ff00ff; //Madness - seemingly the tile layers (B at least) seem to use this instead of color 0? ToDo: look wtf is going on here.
+	GFXPAL[FB_PAL_OFFSET+0x1ff]=0x00ff00ff; //Color the sprite layer uses when no sprites are drawn - 100% transparent.
 
 	//loop
 	int p=0;
@@ -308,13 +368,33 @@ int show_main_menu(char *app_name, int *ret_flags) {
 
 		//The menu header is printed to tilemap A. We jiggle it around by moving the entirety of tilemap A around.
 		p++;
+		#ifdef USE_8_BIT_TRIG
+		float angle_scale = p*0.2;
+		float angle_rotate = p*0.11;
+		uint8_t angle8_scale = angle_scale*40;
+		uint8_t angle8_rotate = angle_rotate*40;
+		float sin8_scale = (sin8_C(angle8_scale)-0x7F)/128.0;
+		float sin8_rotate = (sin8_C(angle8_rotate)-0x7F)/128.0;
+		gfx_set_xlate_val(0, 240,24, 1+sin8_scale*0.1, sin8_rotate*0.1);
+		#else
 		gfx_set_xlate_val(0, 240,24, 1+sin(p*0.2)*0.1, sin(p*0.11)*0.1);
+		#endif
 
 		//This sets up all the sprites for the sinusodial scroller at the bottom.
 		int sprno=0;
 		for (int x=-(scrpos%SCR_PITCH); x<480; x+=SCR_PITCH) {
 			float a=x*0.02+scrpos*0.1;
+			#ifdef USE_8_BIT_TRIG
+			// Convert the angle input from floating point [-PI, PI] to [0,255]
+			// 127 / 3.14 = 40.44, rounding down to 40 as our multiplier.
+			uint8_t angle8 = a*40+0x7F;
+			// Convert sin/cosine output from [0,255] to [-1.0, 1,0]
+			float sin8 = (sin8_C(angle8)-0x7F)/128.0;
+			float cos8 = (cos8_C(angle8)-0x7F)/128.0;
+			set_sprite(sprno++, x, 280+sin8*20, 16+cos8*8, 16+cos8*8, scrtxt[scrpos/SCR_PITCH+sprno], 0);
+			#else
 			set_sprite(sprno++, x, 280+sin(a)*20, 16+cos(a)*8, 16+cos(a)*8, scrtxt[scrpos/SCR_PITCH+sprno], 0);
+			#endif
 		}
 		if (scrtxt[scrpos/SCR_PITCH+sprno]==0) scrpos=0;
 		scrpos+=2;
@@ -325,14 +405,12 @@ int show_main_menu(char *app_name, int *ret_flags) {
 				usb_msc_on();
 				fprintf(console, "\0330M\033C\0330A"); //Set map to tilemap A, clear tilemap, set attr to 0
 				fprintf(console, "\0338;1PUSB CONNECTED"); //Menu header.
-				fprintf(console, "\0331M\033C\n"); //clear menu
 				selected=-1;
 			} else {
 				usb_msc_off();
 				read_menu_items(&menu);
 				fprintf(console, "\0330M\033C\0330A"); //Set map to tilemap A, clear tilemap, set attr to 0
 				fprintf(console, "\0338;1PSELECT AN APP\n\n"); //Menu header.
-				fprintf(console, "\0331M\033C\n"); //clear menu
 				selected=-1;
 			}
 		}
@@ -364,7 +442,7 @@ int show_main_menu(char *app_name, int *ret_flags) {
 		} while((menu.flag[selected] & ITEM_FLAG_SELECTABLE)==0);
 
 		if (need_redraw) {
-			fprintf(console, "\033C");
+			fprintf(console, "\0331M\033C\n"); //select tilemap B, clear menu
 
 			int start=selected-5;
 			for (int i=0; i<11; i++) {
@@ -385,9 +463,9 @@ int show_main_menu(char *app_name, int *ret_flags) {
 	
 	if (selected>=0) {
 		if (menu.flag[selected]&ITEM_FLAG_ON_CART) {
-			sprintf(app_name, "cart:%s", menu.item[selected]);
+			sprintf(app_name, "/cart/%s", menu.item[selected]);
 		} else {
-			sprintf(app_name, "int:%s", menu.item[selected]);
+			sprintf(app_name, "/int/%s", menu.item[selected]);
 		}
 		*ret_flags=menu.flag[selected];
 	}
@@ -425,6 +503,8 @@ void start_app(const char *app) {
 	maincall(0, NULL);
 	user_memfn_set(malloc, realloc, free);
 	syscall_reinit();
+	//Disable all but USB interrupt
+	mach_int_dis(~(1<<INT_NO_USB));
 }
 
 static void
@@ -444,8 +524,7 @@ void main() {
 	user_memfn_set(malloc, realloc, free);
 	verilator_start_trace();
 	//When testing in Verilator, put code that pokes your hardware here.
-
-	
+	LCD_REG(LCD_BL_LEVEL_REG)=0x5000; //save some power by lowering the backlight
 
 	//Initialize IRQ stack to be bigger than the bootrom stack
 	uint32_t *int_stack=malloc(IRQ_STACK_SIZE);
@@ -476,9 +555,9 @@ void main() {
 		//See if there's an autoexec.elf we can run.
 		const char *autoexec;
 		if (booted_from_cartridge()) {
-			autoexec="cart:autoexec.elf";
+			autoexec="/cart/autoexec.elf";
 		} else {
-			autoexec="int:autoexec.elf";
+			autoexec="/int/autoexec.elf";
 		}
 		FILE *f=fopen(autoexec, "r");
 		if (f!=NULL) {
@@ -501,7 +580,7 @@ void main() {
 		show_main_menu(app_name, &flags);
 		if (flags&ITEM_FLAG_BITSTREAM) {
 			printf("Booting cart bitstream...\n");
-			boot_cart_fpga_bitstream();
+			boot_fpga_bitstream(flags&ITEM_FLAG_ON_CART);
 		} else if (flags&ITEM_FLAG_FORMAT) {
 			printf("Formatting cart...\n");
 			fs_cart_initialize_fat();

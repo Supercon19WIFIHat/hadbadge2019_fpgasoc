@@ -29,7 +29,7 @@ SECTIONS {
 		*(.text);
 		*(.text.*);
 	} > ram
-	.data : {
+	.data : SUBALIGN(4) {
 		. = ALIGN(4);
 		*(.rodata);
 		*(.rodata.*);
@@ -106,6 +106,9 @@ PROVIDE ( gfx_load_fb_tga = 0x400020A4 );
 PROVIDE ( gfx_load_fb_tga_mem = 0x400020A8 );
 PROVIDE ( gfx_load_tiles_tga = 0x400020AC );
 PROVIDE ( gfx_load_tiles_tga_mem = 0x400020B0 );
+PROVIDE ( usb_msc_on = 0x400020B4 );
+PROVIDE ( usb_msc_off = 0x400020B8 );
+PROVIDE ( fs_cart_initialize_fat = 0x400020BC );
 
 PROVIDE ( interrupt_vector_table = 0x40000020 );
 PROVIDE ( irq_stack_ptr = 0x400000a0 );
@@ -118,6 +121,8 @@ PROVIDE ( GFXPAL =      0x50002000 );
 PROVIDE ( GFXTILEMAPA = 0x50004000 );
 PROVIDE ( GFXTILEMAPB = 0x50008000 );
 PROVIDE ( GFXTILES =    0x50010000 );
+PROVIDE ( GFXCOPPEROPS =0x50020000 );
 PROVIDE ( USB =         0x60000000 );
 PROVIDE ( SYNTH =       0x80000000 );
+
 

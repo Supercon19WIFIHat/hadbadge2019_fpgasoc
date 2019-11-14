@@ -99,5 +99,11 @@ _start:
 	j gfx_load_tiles_tga
 .global gfx_load_tiles_tga_mem
 	j gfx_load_tiles_tga_mem
+.global usb_msc_on
+	j usb_msc_on
+.global usb_msc_off
+	j usb_msc_off
+.global fs_cart_initialize_fat
+	j fs_cart_initialize_fat
 
 

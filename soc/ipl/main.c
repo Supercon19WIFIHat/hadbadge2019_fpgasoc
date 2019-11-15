@@ -37,6 +37,7 @@
 #include "gfx_load.h"
 #include "cache.h"
 #include "user_memfn.h"
+#include "badgetime.h"
 
 extern volatile uint32_t UART[];
 #define UART_REG(i) UART[(i)/4]
@@ -86,9 +87,6 @@ extern uint32_t rom_cart_boot_flag;
 int booted_from_cartridge() {
 	return rom_cart_boot_flag;
 }
-
-void cdc_task();
-
 
 void boot_fpga_bitstream(int from_cart) {
 	int src=0;
@@ -309,10 +307,15 @@ int show_main_menu(char *app_name, int *ret_flags) {
 	cache_flush(lcdfb, lcdfb+320*512/2);
 	printf("bgnd loaded.\n");
 
+	GFX_REG(GFX_TILEB_OFF)=(0<<16)+(0&0xffff);
+	GFX_REG(GFX_TILEB_INC_COL)=(0<<16)+(64&0xffff);
+	GFX_REG(GFX_TILEB_INC_ROW)=(64<<16)+(0&0xffff);
+
+
 	//Enable layers needed
 	GFX_REG(GFX_LAYEREN_REG)=GFX_LAYEREN_FB|GFX_LAYEREN_TILEB|GFX_LAYEREN_TILEA|GFX_LAYEREN_SPR;
-	GFXPAL[FB_PAL_OFFSET+0x100]=0x00ff00ff; //Madness - seemingly the tile layers (B at least) seem to use this instead of color 0? ToDo: look wtf is going on here.
-	GFXPAL[FB_PAL_OFFSET+0x1ff]=0x00ff00ff; //Color the sprite layer uses when no sprites are drawn - 100% transparent.
+	GFXPAL[0]=0x00ff00ff; //Transparency layer for tiles - somehow this doesn't get set correctly.
+	GFXPAL[0x1ff]=0x00ff00ff; //Color the sprite layer uses when no sprites are drawn - 100% transparent.
 
 	//loop
 	int p=0;
@@ -454,10 +457,7 @@ int show_main_menu(char *app_name, int *ret_flags) {
 		}
 
 		//Idle doing USB stuff while the current frame is still active.
-		do {
-			cdc_task();
-			tud_task();
-		} while (GFX_REG(GFX_VBLCTR_REG) <= cur_vbl_ctr+1); //we run at 30fps
+		wait_for_next_frame(cur_vbl_ctr+1); //we run at 30fps
 		old_btn=btn;
 	}
 	
@@ -479,7 +479,7 @@ int show_main_menu(char *app_name, int *ret_flags) {
 	GFX_REG(GFX_TILEB_INC_COL)=(0<<16)+(64&0xffff);
 	GFX_REG(GFX_TILEB_INC_ROW)=(64<<16)+(0&0xffff);
 	GFX_REG(GFX_COPPER_CTL_REG)=0; //disable copper
-
+	for (int i=0; i<128*2; i++) GFXSPRITES[i]=0; //reset sprites
 	//Clear console
 	fprintf(console, "\0330M\033C\0330A"); //Set map to tilemap A, clear tilemap, set attr to 0
 
@@ -515,6 +515,17 @@ usb_setup_serial_no(void)
 	sprintf((void*)string_desc_arr[3], "%016llx", serial);
 }
 
+int read_leds_on() {
+	FILE *f=fopen("ledval.txt", "r");
+	if (!f) {
+		return 0xAA|(1<<8)|(1<<9); //only light blue, power and 'the other' LED
+	}
+	char buf[10];
+	fgets(buf, 10, f);
+	fclose(f);
+	return atoi(buf);
+}
+
 extern uint32_t *irq_stack_ptr;
 
 #define IRQ_STACK_SIZE (16*1024)
@@ -524,6 +535,13 @@ void main() {
 	user_memfn_set(malloc, realloc, free);
 	verilator_start_trace();
 	//When testing in Verilator, put code that pokes your hardware here.
+
+	if (pic_load_run_file("/cart/pic_firmware.bin")) {
+		printf("Found and loaded PIC payload from cart.\n");
+	} else if (pic_load_run_file("/int/pic_firmware.bin")) {
+		printf("Found and loaded PIC payload from internal flash.\n");
+	}
+
 	LCD_REG(LCD_BL_LEVEL_REG)=0x5000; //save some power by lowering the backlight
 
 	//Initialize IRQ stack to be bigger than the bootrom stack
@@ -540,15 +558,25 @@ void main() {
 	fs_init();
 	printf("Filesystem inited.\n");
 
+	if (pic_load_run_file("/cart/pic_firmware.bin")) {
+		printf("Found and loaded PIC payload from cart.\n");
+	} else if (pic_load_run_file("/int/pic_firmware.bin")) {
+		printf("Found and loaded PIC payload from internal flash.\n");
+	}
+
+
 	//Initialize the LCD
 	lcd_init(simulated());
 	
-    // Basic startup chime.
+	int leds_on=read_leds_on();
+	MISC_REG(MISC_LED_REG) = leds_on;
+
+	// Basic startup chime.
 	SYNTHREG(0xF0) = 0x00000200;
-	SYNTHREG(0x40) = 0x00151800;	
-	SYNTHREG(0x50) = 0x00251E00;	
-	SYNTHREG(0x60) = 0x00352400;	
-	SYNTHREG(0x70) = 0x00453000;	
+	SYNTHREG(0x40) = 0x00151800;
+	SYNTHREG(0x50) = 0x00251E00;
+	SYNTHREG(0x60) = 0x00352400;
+	SYNTHREG(0x70) = 0x00453000;
     
 	//Skip autoexec when user is holding down the designated bypass key
 	if(!(MISC_REG(MISC_BTN_REG)&BUTTON_B)) {
@@ -571,9 +599,10 @@ void main() {
 			printf("No %s found; not running\n", autoexec);
 		}
 	}
+	
 
 	while(1) {
-		MISC_REG(MISC_LED_REG)=0xfffff;
+		MISC_REG(MISC_LED_REG) = leds_on;
 		printf("IPL running.\n");
 		char app_name[256]="*na*";
 		int flags=0;
@@ -590,13 +619,6 @@ void main() {
 			start_app(app_name);
 			printf("IPL: App %s returned.\n", app_name);
 		}
-	}
-}
-
-
-void cdc_task(void) {
-	if (tud_cdc_connected()) {
-		tud_cdc_write_flush();
 	}
 }
 

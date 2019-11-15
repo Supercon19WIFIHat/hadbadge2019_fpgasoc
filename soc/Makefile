@@ -1,6 +1,6 @@
 -include ../local-settings.mk
 #Badge version. Green (unused) is 1, red is 2, blue is 3, prod (black) is 4
-BADGE_VER ?= 2
+BADGE_VER ?= 4
 #Project name
 PROJ=soc
 #Seed for nextpnr. Change this to another random value if you happen to run 
@@ -120,6 +120,16 @@ SRC += $(addprefix pic/, \
 	risc16f84_clk2x.v \
 )
 
+SRC_SYNTH += $(addprefix pic/, \
+	pic_progmem_ecp5.v \
+	pic_datamem_ecp5.v \
+)
+
+SRC_SIM += $(addprefix pic/, \
+	pic_progmem_sim.v \
+	pic_datamem_sim.v \
+)
+
 	# Audio
 SRC += $(addprefix audio/, \
 	audio_mix.v \
@@ -143,9 +153,10 @@ SRC_SYNTH += $(addprefix hdmi/, \
 	vga.v \
 )
 
-EXTRA_DEPEND=rom_random_seeds0x123456.hex pic/rom_initial.hex
+EXTRA_DEPEND=rom_random_seeds0x123456.hex
 BRAMFILE=rom.hex
 CONSTR=$(word $(BADGE_VER), had19_proto1.lpf had19_proto2.lpf had19_proto3.lpf had19_prod.lpf)
+HWDEF=$(word $(BADGE_VER), BADGE_V1 BADGE_V2 BADGE_V3 BADGE_PROD)
 TRELLIS=/usr/share/trellis
 
 ifeq ($(OS),Windows_NT)
@@ -168,7 +179,7 @@ all: $(PROJ).svf
 
 $(PROJ).json $(PROJ).blif: $(SRC) $(SRC_SYNTH) $(EXTRA_DEPEND)
 	yosys$(EXE) -e ".*(assigned|implicitly).*" -l yosys.log \
-		-p "read -sv -DBADGE_VER=$(BADGE_VER) -DBADGE_V$(BADGE_VER)=1 $(SRC) $(SRC_SYNTH); \
+		-p "read -sv -DBADGE_VER=$(BADGE_VER) -D$(HWDEF)=1 $(SRC) $(SRC_SYNTH); \
 			  synth_ecp5 -abc9 -top top_fpga -json $(PROJ).json -blif $(PROJ).blif"
 
 %_out_synth.config: %.json clock-constrainsts.py
@@ -238,9 +249,6 @@ gdb:
 pcpi_fastmul_dsp_testbench:
 	iverilog -opcpi_fastmul_dsp_testbench.vvp pcpi_fastmul_dsp_testbench.v pcpi_fastmul_dsp.v picorv32/picorv32.v mul_18x18_sim.v
 	vvp pcpi_fastmul_dsp_testbench.vvp
-
-pic/rom_initial.hex: pic/rom.asm
-	$(MAKE) -C pic rom_initial.hex
 
 ipl:
 	$(MAKE) -C ipl

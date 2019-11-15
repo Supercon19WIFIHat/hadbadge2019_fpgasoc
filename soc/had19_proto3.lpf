@@ -116,8 +116,8 @@ IOBUF PORT "lcd_blen" IO_TYPE=LVCMOS33;
 #generic IO
 LOCATE COMP "uart_rx" SITE "U2";
 LOCATE COMP "uart_tx" SITE "U1";
-LOCATE COMP "wifi_rx" SITE "C15"; C15
-LOCATE COMP "wifi_tx" SITE "B15"; B15
+LOCATE COMP "wifi_rx" SITE "B15"; C15
+LOCATE COMP "wifi_tx" SITE "C15"; B15
 LOCATE COMP "genio[29]" SITE "C14";
 LOCATE COMP "genio[28]" SITE "E17";
 LOCATE COMP "genio[27]" SITE "A12";

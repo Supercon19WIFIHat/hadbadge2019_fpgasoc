@@ -92,7 +92,7 @@ void main(int argc, char **argv) {
 	//st=getAT(buffer);
 	//fprintf(f,"rx--\n%s\n--[%d]\n",buffer,st);
 
-	sendAT("at+bleaddr?");
+	sendAT("at+bleinit=2");
 	st=getAT(buffer);
 	fprintf(f,"rx--\n%s\n--[%d]\n",buffer,st);
 /*
@@ -119,15 +119,20 @@ int getAT(char* buffer){
 	int timeout=2000;
 	int chars=0;
 	while(1){
+		// read from buf
 		int c = UART_REG(UART_WIFI_DATA_REG);
+		// is empty flag set?
 		if (c&0x80000000){
+			// no data, increment timeout.
 			timeout--;
 			delay(1);
 			if (timeout<1) return -1;
 		} else {
+			// we have a vald byte.
 			//fprintf(f,"%x ",(char)c);
 			buffer[chars]=c;
 			if (chars>2){
+				// do OK check if we have at least 2 chars.
 				if ((char)buffer[chars]=='K' && (char)buffer[chars-1]=='O'){
 					chars++;
 					buffer[chars]=0;
@@ -135,6 +140,7 @@ int getAT(char* buffer){
 				}
 			}
 			if (chars>5){
+				// do ERROR check if we have at least 5 chars
 				if ((char)buffer[chars]=='R' &&
 					 (char)buffer[chars-1]=='O'&&
 					 (char)buffer[chars-2]=='R'&&

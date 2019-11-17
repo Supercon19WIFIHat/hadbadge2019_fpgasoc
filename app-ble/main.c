@@ -112,6 +112,8 @@ void main(int argc, char **argv) {
 }
 
 
+// Get a response to an AT command. The responses end in ERROR or OK.
+// This pulls bytes untill it sees 'ERROR' or 'OK' or times out.
 
 int getAT(char* buffer){
 	int timeout=2000;
@@ -150,6 +152,10 @@ int getAT(char* buffer){
 
 }
 
+
+// This waits for 'ready' and returns 0 if it sees it or -1 if it times out.
+// The module will boot and spit out a bunch of boot status messages.
+// this 'consumes' thoes.
 int waitREADY(){
 	char buffer[10];
 	int timeout=1000;
@@ -178,6 +184,7 @@ int waitREADY(){
 	
 }
 
+// Send an AT string. This adds a CRLF ot the end.
 void sendAT(char* string){
 	int i=0;
 	while(string[i]!=0){
